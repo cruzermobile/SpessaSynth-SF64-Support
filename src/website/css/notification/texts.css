@@ -1,0 +1,9 @@
+.notification p {
+    margin: auto;
+    padding: 0.8rem;
+    font-size: var(--notification-font-size);
+}
+
+.notification label {
+    font-size: var(--notification-font-size);
+}

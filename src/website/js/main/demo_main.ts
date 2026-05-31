@@ -1,0 +1,619 @@
+import { Manager } from "../manager/manager.js";
+import {
+    getCheckSvg,
+    getExclamationSvg,
+    getHourglassSvg
+} from "../utils/icons.js";
+import {
+    closeNotification,
+    type NotificationContent,
+    showNotification
+} from "../notification/notification.js";
+import { ANIMATION_REFLOW_TIME } from "../utils/animation_utils.js";
+import { LocaleManager } from "../manager/locale_manager.js";
+
+import { BasicSoundBank } from "spessasynth_core";
+import { UPDATE_NAME, WHATS_NEW } from "../../changelog.js";
+import type { LocaleCode } from "../../locale/locale_list.ts";
+import type { MIDIFile } from "../utils/drop_file_handler.ts";
+import {
+    DEFAULT_SAVED_SETTINGS,
+    type SavedSettings
+} from "../../../server/saved_settings.ts";
+import { readSampleRateParam } from "../utils/sample_rate_param.ts";
+
+/**
+ * Demo_main.js
+ * purpose: main script for the demo, loads the soundfont and passes it to the manager.js
+ */
+const SF_NAME = "GeneralUserGS.sf3";
+
+const titleMessage = document.querySelector<HTMLElement>("#title")!;
+const fileInput = document.querySelector<HTMLInputElement>("#midi_file_input")!;
+const sfInput = document.querySelector("#sf_file_input")!;
+
+const demoSongButton = document.querySelector<HTMLElement>("#demo_song")!;
+
+const downloadButton = document.querySelector<HTMLElement>("#download_button")!;
+const exportButton = document.querySelector<HTMLElement>("#export_button")!;
+const loading = document.querySelectorAll<HTMLElement>(".loading")[0];
+
+const loadingMessage = document.querySelector<HTMLElement>("#loading_message")!;
+const fileUpload = document.querySelector<HTMLLabelElement>("#file_upload")!;
+const sfUpload = document.querySelector<HTMLInputElement>("#sf_upload")!;
+
+// Load version
+const p = await fetch("package.json");
+const t = await p.text();
+const packageJson = JSON.parse(t) as { version: string };
+window.SPESSASYNTH_VERSION = packageJson.version || "UNKNOWN";
+
+// Remove the old files
+fileInput.value = "";
+fileInput.focus();
+
+// Added 1 to force a reset (v4.2.0)
+const localStorageName = "spessasynth-settings-1";
+
+// IndexedDB stuff
+const dbName = "spessasynth-db";
+const objectStoreName = "soundFontStore";
+
+let sfBuffer: ArrayBuffer | undefined = undefined;
+
+// Load update title
+const updateTitle = document.querySelector("#update_title");
+if (updateTitle) {
+    updateTitle.textContent = UPDATE_NAME;
+}
+
+// Load what's new
+const whatsNew = document.querySelector("#whats_new_content");
+if (whatsNew) {
+    whatsNew.innerHTML = "";
+    for (const w of WHATS_NEW) {
+        const li = document.createElement("li");
+        li.textContent = w;
+        whatsNew.append(li);
+    }
+    const whatsNewVer = document.querySelector("#whats_new_version");
+    if (whatsNewVer) {
+        whatsNewVer.textContent = window.SPESSASYNTH_VERSION || "0.0.0";
+    }
+}
+
+function initDatabase(callback: (arg0: IDBDatabase) => unknown) {
+    const request = indexedDB.open(dbName, 1);
+
+    request.onsuccess = () => {
+        const db = request.result;
+        callback(db);
+    };
+
+    request.onupgradeneeded = () => {
+        const db = request.result;
+        db.createObjectStore(objectStoreName, { keyPath: "id" });
+    };
+}
+
+async function loadLastSoundFontFromDatabase(): Promise<
+    ArrayBuffer | undefined
+> {
+    console.info("Loading the soundfont from the database...");
+    return await new Promise((resolve) => {
+        // Fetch from db
+        initDatabase((db) => {
+            const transaction = db.transaction([objectStoreName], "readonly");
+            const objectStore = transaction.objectStore(objectStoreName);
+            const request = objectStore.get("buffer");
+
+            request.addEventListener("error", (e) => {
+                console.error("Database error");
+                console.error(e);
+                resolve(undefined);
+            });
+
+            request.addEventListener("success", () => {
+                const result = request.result as
+                    | { data: ArrayBuffer }
+                    | undefined;
+                if (!result) {
+                    resolve(undefined);
+                    return;
+                }
+                resolve(result.data);
+            });
+        });
+    });
+}
+
+function changeIcon(html: string, disableAnimation = true) {
+    const icon = loading.querySelectorAll(".loading_icon")[0] as HTMLElement;
+    icon.innerHTML = html;
+    icon.style.animation = disableAnimation ? "none" : "";
+}
+
+async function saveSoundFontToIndexedDB(arr: ArrayBuffer) {
+    const magic = new TextDecoder().decode(arr.slice(0, 4));
+    const check = arr.slice(8, 12);
+    const dec = new TextDecoder().decode(check).toLowerCase();
+    if (
+        magic !== "SF64" &&
+        dec !== "sfbk" &&
+        dec !== "sfpk" &&
+        dec !== "dls "
+    ) {
+        console.warn("Not viable to save!");
+        return;
+    }
+    return new Promise<void>((solve) => {
+        initDatabase((db) => {
+            const transaction = db.transaction([objectStoreName], "readwrite");
+            const objectStore = transaction.objectStore(objectStoreName);
+            try {
+                const request = objectStore.put({ id: "buffer", data: arr });
+                request.addEventListener("success", () =>
+                    console.info("Sound bank stored successfully")
+                );
+                request.addEventListener("error", (e) =>
+                    console.error("Error saving sound bank", e)
+                );
+            } catch (error) {
+                console.warn("Failed to save sound bank:", error);
+            }
+            solve();
+        });
+    });
+}
+
+let context: AudioContext;
+
+// Attempt to load soundfont from indexed db
+async function demoInit(initLocale: LocaleCode) {
+    // Initialize the locale management system. do it here because we want it ready before all js classes do their things
+    const localeManager = new LocaleManager(initLocale);
+    try {
+        context = new AudioContext({
+            sampleRate: readSampleRateParam()
+        });
+    } catch (error) {
+        changeIcon(getExclamationSvg(256));
+        loadingMessage.textContent = localeManager.getLocaleString(
+            "locale.synthInit.noWebAudio"
+        );
+        throw error;
+    }
+    loadingMessage.textContent = localeManager.getLocaleString(
+        "locale.synthInit.loadingSoundfont"
+    );
+    let soundFontBuffer: ArrayBuffer | undefined =
+        await loadLastSoundFontFromDatabase();
+    let loadedFromDb = true;
+    if (soundFontBuffer === undefined) {
+        console.warn("Failed to load from db, fetching online instead");
+        loadedFromDb = false;
+        const progressBar = document.querySelector<HTMLElement>(
+            "#progress_bar"
+        )! as HTMLDivElement;
+        const sFontLoadMessage = localeManager.getLocaleString(
+            "locale.synthInit.loadingBundledSoundfont"
+        );
+        loadingMessage.textContent = sFontLoadMessage;
+        try {
+            soundFontBuffer = await fetchFont(
+                `soundfonts/${SF_NAME}`,
+                (percent: number) => {
+                    loadingMessage.textContent = `${sFontLoadMessage} ${percent}%`;
+                }
+            );
+        } catch (error) {
+            console.error("Error loading bundled:", error);
+            soundFontBuffer = BasicSoundBank.getSampleSoundBankFile();
+        }
+
+        progressBar.style.width = "0";
+    } else {
+        console.info("Loaded the soundfont from the database successfully");
+    }
+    sfBuffer = soundFontBuffer;
+    if (!loadedFromDb) {
+        loadingMessage.textContent = localeManager.getLocaleString(
+            "locale.synthInit.savingSoundfont"
+        );
+        await saveSoundFontToIndexedDB(soundFontBuffer);
+    }
+
+    const resumeCtx = () => {
+        if (context.state !== "running") {
+            void context.resume();
+            document.removeEventListener("mousedown", resumeCtx);
+        }
+    };
+
+    if (context.state !== "running") {
+        document.addEventListener("mousedown", resumeCtx);
+    }
+
+    // Prepare midi interface
+    loadingMessage.textContent = localeManager.getLocaleString(
+        "locale.synthInit.startingSynthesizer"
+    );
+    window.manager = new Manager(context, sfBuffer, localeManager);
+    window.manager.sfError = (e) => {
+        changeIcon(getExclamationSvg(256));
+        if (loadedFromDb) {
+            console.warn("Invalid soundfont in the database. Resetting.");
+            // Restore to default
+            initDatabase((db) => {
+                const transaction = db.transaction(
+                    [objectStoreName],
+                    "readwrite"
+                );
+                const objectStore = transaction.objectStore(objectStoreName);
+                const request = objectStore.delete("buffer");
+                request.onsuccess = () => {
+                    location.reload();
+                };
+            });
+        } else {
+            titleMessage.innerHTML = `Error parsing soundfont: <pre style='font-family: monospace; font-weight: bold;'>${e}</pre>`;
+        }
+        loadingMessage.innerHTML = `Error parsing soundfont: <pre style='font-family: monospace; font-weight: bold;'>${e}</pre>`;
+    };
+    await window.manager.ready;
+
+    window.manager.synth?.setSystemParameter("voiceCap", voiceCap);
+    window.manager.synth?.setLogLevel(false, false, false);
+
+    if (fileInput.files?.[0]) {
+        await startMidi(fileInput.files);
+    } else {
+        fileInput.addEventListener("change", () => {
+            if (fileInput.files?.[0]) {
+                void startMidi(fileInput.files);
+            }
+        });
+    }
+
+    changeIcon(getCheckSvg(256));
+    loadingMessage.textContent = localeManager.getLocaleString(
+        "locale.synthInit.done"
+    );
+}
+
+async function fetchFont(url: string | URL, callback: (p: number) => unknown) {
+    const response = await fetch(url);
+    if (!response.ok || !response.body) {
+        titleMessage.textContent = "Error downloading soundfont!";
+        throw new Error(response.statusText);
+    }
+    const size = Number.parseInt(response.headers.get("content-length") ?? "0");
+    const reader = response.body.getReader();
+    let done;
+    /**
+     * No data array but chunks because gh pages sends the wrong size?
+     */
+    const chunks: Uint8Array[] = [];
+    let offset = 0;
+    do {
+        const readData = await reader.read();
+        if (readData.value) {
+            chunks.push(readData.value);
+            offset += readData.value.length;
+        }
+        done = readData.done;
+        const percent = Math.round((offset / size) * 100);
+        callback(percent);
+    } while (!done);
+
+    // Combine
+    const outSize = chunks.reduce((size, chunk) => size + chunk.length, 0);
+    const dataArray = new Uint8Array(outSize);
+    let written = 0;
+    for (const c of chunks) {
+        dataArray.set(c, written);
+        written += c.length;
+    }
+    return dataArray.buffer;
+}
+
+async function startMidi(midiFiles: FileList | File[]) {
+    demoSongButton.style.display = "none";
+    downloadButton.style.display = "none";
+    if (!window.manager) {
+        throw new Error("Unexpected lack of manager!");
+    }
+    let fName;
+    fName =
+        midiFiles[0].name.length > 20
+            ? midiFiles[0].name.slice(0, 21) + "..."
+            : midiFiles[0].name;
+    if (midiFiles.length > 1) {
+        fName += ` and ${midiFiles.length - 1} others`;
+    }
+    fileUpload.textContent = fName;
+    fileUpload.title = midiFiles[0].name;
+
+    const parsed: MIDIFile[] = [];
+    for (const file of midiFiles) {
+        parsed.push({
+            binary: await file.arrayBuffer(),
+            fileName: file.name
+        });
+    }
+
+    window.manager.play(parsed);
+
+    exportButton.style.display = "flex";
+}
+
+/**
+ * Saves the settings (settings.js) selected data to config.json
+ * (only on the local edition that's why it's here and not in the demo_main.js)
+ */
+function saveSettings(settingsData: SavedSettings) {
+    localStorage.setItem(localStorageName, JSON.stringify(settingsData));
+    console.info("saved as", settingsData);
+}
+
+let voiceCap = 350;
+
+const savedVoiceCap = localStorage.getItem("spessasynth-voice-cap");
+if (savedVoiceCap) {
+    voiceCap = Number.parseInt(savedVoiceCap);
+}
+window.rememberVoiceCap = (cap: number) => {
+    localStorage.setItem("spessasynth-voice-cap", cap.toString());
+    window.location.reload();
+};
+
+// INIT STARTS HERE
+
+// Expose the save function
+window.saveSettings = saveSettings;
+
+// Load saved settings
+let savedJson = localStorage.getItem(localStorageName);
+savedJson ??= JSON.stringify(DEFAULT_SAVED_SETTINGS);
+const saved = JSON.parse(savedJson) as SavedSettings;
+if (saved !== null) {
+    /**
+     * Reads the settings
+     */
+    window.savedSettings = new Promise((resolve) => {
+        resolve(saved);
+    });
+}
+// Get locale from saved settings or browser: "en-US" will turn into just "en"
+const initLocale: LocaleCode = saved?.interface?.language
+    ? (saved?.interface?.language ??
+      (navigator.language.split("-")[0].toLowerCase() as LocaleCode))
+    : (navigator.language.split("-")[0].toLowerCase() as LocaleCode);
+
+// Remove the old files
+fileInput.value = "";
+fileInput.focus();
+// Set initial styles
+sfUpload.style.display = "none";
+fileUpload.style.display = "none";
+
+interface DemoSong {
+    name: string;
+    fileName: string;
+    credits: string;
+    loop?: boolean;
+    fullMIDISupport: boolean;
+}
+
+async function playDemoSong(song: DemoSong) {
+    if (!window.manager?.synth) {
+        throw new Error("Unexpected lack of manager!");
+    }
+    titleMessage.textContent = window.manager.localeManager.getLocaleString(
+        "locale.synthInit.genericLoading"
+    );
+    const r = await fetch(
+        "https://spessasus.github.io/spessasynth-demo-songs/demo_songs/" +
+            song.fileName
+    );
+    if (!song.fullMIDISupport) {
+        window.manager.synth.setSystemParameter("nrpnParamLock", true);
+        window.manager.synth.setSystemParameter("drumLock", true);
+    }
+    // noinspection JSCheckFunctionSignatures
+    await startMidi([new File([await r.arrayBuffer()], song.fileName)]);
+    setTimeout(() => {
+        window.manager?.seqUI?.setLoopState?.(song?.loop ?? false);
+    }, 500);
+}
+
+await demoInit(initLocale);
+
+console.info("Demo init finished");
+sfUpload.style.display = "flex";
+fileUpload.style.display = "flex";
+loading.classList.add("done");
+document.documentElement.classList.add("no_scroll");
+document.body.classList.add("no_scroll");
+setTimeout(() => {
+    loading.style.display = "none";
+    document.body.classList.remove("no_scroll");
+    document.documentElement.classList.remove("no_scroll");
+}, 1000);
+sfInput.addEventListener("change", (e) => {
+    const target = e.target as HTMLInputElement;
+    const file = target.files?.[0];
+    if (!file) {
+        return;
+    }
+    if (!window.manager) {
+        throw new Error("Unexpected lack of manager!");
+    }
+
+    if (window.manager.seq) {
+        window.manager.seq.pause();
+    }
+    (sfUpload.firstElementChild! as HTMLElement).textContent = file.name;
+    loading.style.display = "";
+    setTimeout(() => {
+        void (async () => {
+            if (!window.manager) {
+                throw new Error("Unexpected lack of manager!");
+            }
+            loading.classList.remove("done");
+            changeIcon(getHourglassSvg(256), false);
+            loadingMessage.textContent =
+                window.manager.localeManager.getLocaleString(
+                    "locale.synthInit.loadingSoundfont"
+                );
+            const parseStart = performance.now() / 1000;
+            // Parse the soundfont
+            let soundFontBuffer;
+            try {
+                soundFontBuffer = await file.arrayBuffer();
+                sfBuffer = soundFontBuffer;
+            } catch (error) {
+                loadingMessage.textContent =
+                    window.manager.localeManager.getLocaleString(
+                        "locale.warnings.outOfMemory"
+                    );
+                changeIcon(getExclamationSvg(256));
+                showNotification(
+                    window.manager.localeManager.getLocaleString(
+                        "locale.warnings.warning"
+                    ),
+                    [
+                        {
+                            type: "text",
+                            textContent:
+                                window.manager.localeManager.getLocaleString(
+                                    "locale.warnings.outOfMemory"
+                                )
+                        }
+                    ]
+                );
+                throw error;
+            }
+            window.manager.sfError = (e) => {
+                loadingMessage.innerHTML = `Error parsing soundfont: <pre style='font-family: monospace; font-weight: bold;'>${e}</pre>`;
+                changeIcon(getExclamationSvg(256));
+                console.error(e);
+            };
+
+            if (soundFontBuffer.byteLength <= 1_153_433_617) {
+                loadingMessage.textContent =
+                    window.manager.localeManager.getLocaleString(
+                        "locale.synthInit.savingSoundfont"
+                    );
+                await saveSoundFontToIndexedDB(soundFontBuffer);
+            }
+            loadingMessage.textContent =
+                window.manager.localeManager.getLocaleString(
+                    "locale.synthInit.startingSynthesizer"
+                );
+            await window.manager.reloadSf(soundFontBuffer);
+
+            // Wait to make sure that the animation has finished
+            const elapsed = performance.now() / 1000 - parseStart;
+            await new Promise((r) => setTimeout(r, 1000 - elapsed));
+            // DONE
+            changeIcon(getCheckSvg(256));
+            loadingMessage.textContent =
+                window.manager.localeManager.getLocaleString(
+                    "locale.synthInit.done"
+                );
+            loading.classList.add("done");
+            document.documentElement.classList.add("no_scroll");
+            document.body.classList.add("no_scroll");
+            setTimeout(() => {
+                loading.style.display = "none";
+                document.body.classList.remove("no_scroll");
+                document.documentElement.classList.remove("no_scroll");
+            }, 1000);
+        })();
+    }, ANIMATION_REFLOW_TIME);
+});
+
+// Add export event listener
+exportButton.addEventListener("click", () => {
+    if ("manager" in window && window.manager instanceof Manager) {
+        window.manager.showExportMenu();
+    }
+});
+
+demoSongButton.addEventListener("click", async () => {
+    if (!window.manager) {
+        throw new Error("Unexpected lack of manager!");
+    }
+    const contents: NotificationContent[] = [
+        {
+            type: "button",
+            textContent: "Bundled SoundFont Credits",
+            onClick: () => {
+                window.open("https://schristiancollins.com/generaluser.php");
+            }
+        }
+    ];
+    titleMessage.textContent = window.manager.localeManager.getLocaleString(
+        "locale.synthInit.genericLoading"
+    );
+    const songs = await (
+        await fetch(
+            "https://spessasus.github.io/spessasynth-demo-songs/demo_song_list.json"
+        )
+    )
+        // eslint-disable-next-line unicorn/no-await-expression-member
+        .text();
+    const songsJSON = JSON.parse(songs) as DemoSong[];
+    for (const song of songsJSON) {
+        contents.push({
+            type: "button",
+            textContent: song.name,
+            onClick: (n) => {
+                if (!window.manager) {
+                    throw new Error("Unexpected lack of manager!");
+                }
+                closeNotification(n.id);
+                showNotification(
+                    window.manager.localeManager.getLocaleString(
+                        "locale.credits"
+                    ),
+                    [
+                        {
+                            type: "text",
+                            textContent: song.credits.replace("\n", "\r\n\r\n"),
+                            attributes: { style: "white-space: pre-line;" }
+                        },
+                        {
+                            type: "button",
+                            textContent: "Ok",
+                            onClick: (n) => {
+                                closeNotification(n.id);
+                            }
+                        }
+                    ],
+                    999_999,
+                    true,
+                    undefined,
+                    undefined,
+                    async () => {
+                        await playDemoSong(song);
+                    }
+                );
+            }
+        });
+    }
+
+    showNotification(
+        window.manager.localeManager.getLocaleString("locale.demoSongButton"),
+        contents,
+        999_999,
+        true,
+        undefined,
+        {
+            overflowY: "scroll",
+            flexWrap: "nowrap",
+            maxHeight: "80vh"
+        }
+    );
+});

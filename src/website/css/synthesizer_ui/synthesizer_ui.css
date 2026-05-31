@@ -1,0 +1,184 @@
+@import "voice_meter.css";
+@import "voice_selector.css";
+@import "synthui_button.css";
+
+#synthesizer_controls {
+    --voice-meter-height: 2.5em;
+    --synthui-background: rgba(0, 0, 0, 0.8);
+    --synthui-border-radius: var(--primary-border-radius);
+}
+
+#synthesizer_controls * {
+    user-select: none;
+    -webkit-user-select: none;
+    --synthui-margin: 0.2em;
+}
+
+.wrapper {
+    height: 80%;
+    padding: 2%;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-evenly;
+}
+
+.controls_wrapper {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    justify-content: center;
+    margin: 0.6rem;
+}
+
+.main_controller_element {
+    margin: var(--synthui-margin);
+}
+
+.effect_wrapper {
+    display: flex;
+    flex-direction: column;
+    max-width: 70vw;
+    margin: auto;
+    justify-content: center;
+}
+
+.effect_wrapper h2 {
+    margin-bottom: 0 !important;
+}
+
+.effect_wrapper h4 {
+    font-style: italic;
+}
+
+.effect_wrapper > * {
+    width: auto;
+    margin-bottom: 1em;
+}
+
+@media (min-aspect-ratio: 0.8) {
+    .effect_wrapper .voice_meter {
+        min-width: 33%;
+    }
+}
+
+.effect_wrapper_params {
+    display: flex;
+    flex-wrap: wrap;
+}
+@media (min-aspect-ratio: 0.8) {
+    .effect_wrapper_params.global_insertion .voice_meter {
+        min-width: 32%;
+    }
+}
+
+.synthui_port_group {
+    transition: transform 0.3s ease;
+    transform-origin: top center;
+}
+
+.synthui_port_group.collapsed {
+    transform: scale(1, 0);
+}
+
+.controller_element {
+    position: relative;
+    height: var(--voice-meter-height);
+    flex: 1;
+    border-radius: var(--synthui-border-radius);
+    margin: var(--synthui-margin);
+}
+
+.synthui_port_descriptor {
+    font-weight: bold;
+    font-style: italic;
+    font-size: 1.2rem;
+    padding: 0.3rem;
+    cursor: pointer;
+}
+
+.synthui_port_descriptor:hover {
+    color: #fff;
+    text-shadow: 0 0 5px white;
+}
+
+.synthui_controller {
+    left: 0;
+    display: none;
+    position: absolute;
+    background: var(--synthui-background);
+    backdrop-filter: blur(0.3rem);
+    top: 100%;
+    border-radius: 0 0 1em 1em;
+    transform: scaleX(0);
+    transition: transform 0.2s ease;
+    width: 100%;
+    z-index: 127;
+    padding: 0.5em;
+}
+
+.light_mode .synthui_controller {
+    background: linear-gradient(
+        115deg,
+        rgb(200, 200, 200),
+        rgba(255, 255, 255),
+        rgba(200, 200, 200)
+    ) !important;
+}
+
+.synthui_controller_show {
+    transform: scaleX(1) !important;
+}
+
+.channel_controller {
+    display: flex;
+    align-items: stretch;
+    flex-wrap: wrap;
+    transition: 0.2s ease;
+}
+
+.channel_controller.no_voices {
+    filter: brightness(0.8);
+}
+
+.mute_button {
+    flex: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    border: #777 1px solid;
+    min-width: var(--voice-meter-height);
+}
+
+.mute_button pre {
+    font-size: 1.5rem;
+    font-weight: bold;
+}
+
+.mute_button.red pre {
+    color: red;
+}
+
+.mute_button_light * {
+    color: black;
+}
+
+.mute_button > * {
+    transition: transform 0.2s ease;
+}
+
+.mute_button:active {
+    filter: brightness(0.8);
+    transform: scale(var(--active-scale));
+}
+
+.mute_button:hover {
+    cursor: pointer;
+}
+
+.mute_button:hover > * {
+    transform: scale(1.1) rotate(5deg);
+}
+
+.mute_button:hover path {
+    filter: drop-shadow(0 0 1px currentColor);
+}
