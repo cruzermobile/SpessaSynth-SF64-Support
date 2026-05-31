@@ -1,0 +1,432 @@
+diff --git a/node_modules/spessasynth_core/dist/index.js b/node_modules/spessasynth_core/dist/index.js
+index cd9e028..1caa194 100644
+--- a/node_modules/spessasynth_core/dist/index.js
++++ b/node_modules/spessasynth_core/dist/index.js
+@@ -11767,6 +11767,419 @@ var SoundFont2 = class extends BasicSoundBank {
+ };
+ //#endregion
+ //#region src/soundbank/sound_bank_loader.ts
++const SF64_REQUIRED_CHUNKS = [
++	"INFO",
++	"SMPL",
++	"SHDR",
++	"PHDR",
++	"PBAG",
++	"PGEN",
++	"INST",
++	"IBAG",
++	"IGEN"
++];
++const SF64_TEXT_DECODER = new TextDecoder("utf-8");
++const SF64_MAX_SAFE_INTEGER = BigInt(Number.MAX_SAFE_INTEGER);
++var SF64Reader = class {
++	view;
++	bytes;
++	currentIndex;
++	endIndex;
++	constructor(buffer, offset = 0, length = buffer.byteLength - offset) {
++		this.view = new DataView(buffer);
++		this.bytes = new Uint8Array(buffer);
++		this.currentIndex = offset;
++		this.endIndex = offset + length;
++	}
++	ensure(byteLength) {
++		if (this.currentIndex + byteLength > this.endIndex) throw new SyntaxError("Unexpected end of SF64 data.");
++	}
++	readAscii(byteLength) {
++		this.ensure(byteLength);
++		let out = "";
++		for (let i = 0; i < byteLength; i++) out += String.fromCharCode(this.bytes[this.currentIndex++]);
++		return out;
++	}
++	readUtf8(byteLength) {
++		this.ensure(byteLength);
++		const text = SF64_TEXT_DECODER.decode(this.bytes.subarray(this.currentIndex, this.currentIndex + byteLength));
++		this.currentIndex += byteLength;
++		return text;
++	}
++	readUint8() {
++		this.ensure(1);
++		return this.view.getUint8(this.currentIndex++);
++	}
++	readInt8() {
++		this.ensure(1);
++		return this.view.getInt8(this.currentIndex++);
++	}
++	readUint16() {
++		this.ensure(2);
++		const value = this.view.getUint16(this.currentIndex, true);
++		this.currentIndex += 2;
++		return value;
++	}
++	readUint32() {
++		this.ensure(4);
++		const value = this.view.getUint32(this.currentIndex, true);
++		this.currentIndex += 4;
++		return value;
++	}
++	readInt32() {
++		this.ensure(4);
++		const value = this.view.getInt32(this.currentIndex, true);
++		this.currentIndex += 4;
++		return value;
++	}
++	readFloat32Bits() {
++		this.ensure(4);
++		const value = this.view.getFloat32(this.currentIndex, true);
++		this.currentIndex += 4;
++		return value;
++	}
++	readUint64(label) {
++		this.ensure(8);
++		const value = this.view.getBigUint64(this.currentIndex, true);
++		this.currentIndex += 8;
++		if (value > SF64_MAX_SAFE_INTEGER) throw new RangeError(`${label} is too large for this JavaScript runtime.`);
++		return Number(value);
++	}
++	skipTo(index) {
++		if (index > this.endIndex) throw new SyntaxError("Unexpected end of SF64 data.");
++		this.currentIndex = index;
++	}
++};
++function isSF64Buffer(buffer) {
++	if (buffer.byteLength < 4) return false;
++	const bytes = new Uint8Array(buffer, 0, 4);
++	return bytes[0] === 83 && bytes[1] === 70 && bytes[2] === 54 && bytes[3] === 52;
++}
++function readSF64Chunks(buffer) {
++	const reader = new SF64Reader(buffer);
++	const magic = reader.readAscii(4);
++	if (magic !== "SF64") throw new SyntaxError(`Invalid SF64 magic: ${magic}`);
++	const major = reader.readUint16();
++	const minor = reader.readUint16();
++	if (major !== 1) throw new SyntaxError(`Unsupported SF64 major version ${major}.`);
++	const declaredFileSize = reader.readUint64("SF64 file size");
++	if (declaredFileSize > buffer.byteLength) throw new SyntaxError(`SF64 file size ${declaredFileSize} exceeds buffer length ${buffer.byteLength}.`);
++	if (declaredFileSize < buffer.byteLength) SpessaLog.warn(`SF64 file has ${buffer.byteLength - declaredFileSize} trailing bytes.`);
++	const chunks = /* @__PURE__ */ new Map();
++	const limit = declaredFileSize || buffer.byteLength;
++	while (reader.currentIndex + 12 <= limit) {
++		const id = reader.readAscii(4);
++		const size = reader.readUint64(`SF64 ${id} chunk size`);
++		const dataStart = reader.currentIndex;
++		const dataEnd = dataStart + size;
++		if (dataEnd > limit) throw new SyntaxError(`SF64 ${id} chunk exceeds declared file size.`);
++		chunks.set(id, {
++			id,
++			start: dataStart,
++			size
++		});
++		reader.skipTo(dataEnd + size % 2);
++	}
++	return {
++		chunks,
++		version: {
++			major,
++			minor
++		}
++	};
++}
++function getRequiredSF64Chunk(chunks, id) {
++	const chunk = chunks.get(id);
++	if (!chunk) throw new SyntaxError(`SF64 missing required ${id} chunk.`);
++	return chunk;
++}
++function readSF64Info(buffer, chunk) {
++	const reader = new SF64Reader(buffer, chunk.start, chunk.size);
++	const entries = {};
++	const count = reader.readUint32();
++	for (let i = 0; i < count; i++) {
++		const key = reader.readUtf8(reader.readUint16());
++		const value = reader.readUtf8(reader.readUint32());
++		entries[key] = value;
++	}
++	return entries;
++}
++function sf64ToSignedInt32(value) {
++	return value > 2147483647 ? value - 4294967296 : value;
++}
++function sf64GeneratorFloat32(value) {
++	const buffer = new ArrayBuffer(4);
++	new DataView(buffer).setUint32(0, value, true);
++	return new DataView(buffer).getFloat32(0, true);
++}
++function clampSF64GeneratorValue(value) {
++	return Math.max(-32768, Math.min(32767, Math.round(value)));
++}
++function readSF64GeneratorAmount(operator, amountType, amountA, amountB) {
++	switch (amountType) {
++		case 0:
++			return 0;
++		case 1:
++			return amountA;
++		case 2:
++			return sf64ToSignedInt32(amountA);
++		case 3:
++			if (operator === GeneratorTypes.keyRange || operator === GeneratorTypes.velRange) return (amountB & 127) << 8 | amountA & 127;
++			return amountA;
++		case 4:
++			return sf64GeneratorFloat32(amountA);
++		default:
++			throw new SyntaxError(`Unsupported SF64 generator amount type ${amountType}.`);
++	}
++}
++function readSF64Generators(buffer, chunk) {
++	const reader = new SF64Reader(buffer, chunk.start, chunk.size);
++	const count = reader.readUint32();
++	const generators = [];
++	for (let i = 0; i < count; i++) {
++		const operator = reader.readUint16();
++		const amountType = reader.readUint16();
++		const amountA = reader.readUint32();
++		const amountB = reader.readUint32();
++		generators.push({
++			operator,
++			amountType,
++			amountA,
++			amountB,
++			value: readSF64GeneratorAmount(operator, amountType, amountA, amountB)
++		});
++	}
++	return generators;
++}
++function getSF64ReferenceGenerator(generators, operator) {
++	const generator = generators.find((g) => g.operator === operator);
++	if (!generator) return void 0;
++	return generator.amountType === 2 ? sf64ToSignedInt32(generator.amountA) : generator.amountA;
++}
++function getSF64ZoneGenerators(generators) {
++	const out = [];
++	for (const generator of generators) {
++		if (generator.operator === GeneratorTypes.instrument || generator.operator === GeneratorTypes.sampleID || generator.operator === GeneratorTypes.endOper) continue;
++		if (generator.operator < 0 || generator.operator > MAX_GENERATOR || GeneratorLimits[generator.operator] === void 0) {
++			SpessaLog.warn(`Skipping unsupported SF64 generator ${generator.operator}.`);
++			continue;
++		}
++		out.push(new Generator(generator.operator, clampSF64GeneratorValue(generator.value), false));
++	}
++	return out;
++}
++function readSF64Bags(buffer, chunk) {
++	const reader = new SF64Reader(buffer, chunk.start, chunk.size);
++	const count = reader.readUint32();
++	const bags = [];
++	for (let i = 0; i < count; i++) bags.push({
++		firstGeneratorIndex: reader.readUint32(),
++		generatorCount: reader.readUint32(),
++		firstModulatorIndex: reader.readUint32(),
++		modulatorCount: reader.readUint32()
++	});
++	return bags;
++}
++function sliceSF64Generators(allGenerators, bag, tableName) {
++	const end = bag.firstGeneratorIndex + bag.generatorCount;
++	if (end > allGenerators.length) throw new SyntaxError(`${tableName} generator range exceeds generator table length.`);
++	return allGenerators.slice(bag.firstGeneratorIndex, end);
++}
++var SF64Sample = class extends BasicSample {
++	s16leData;
++	channelCount;
++	frameCount;
++	sf64LoopMode;
++	constructor(header, s16leData) {
++		super(header.name, header.sampleRate, header.originalKey, header.pitchCorrection, SampleTypes.monoSample, header.loopStart, header.loopEnd);
++		this.s16leData = s16leData;
++		this.channelCount = header.channelCount;
++		this.frameCount = header.frameCount;
++		this.sf64LoopMode = header.loopMode;
++		this.dataOverridden = false;
++	}
++	getAudioData() {
++		if (this.audioData) return this.audioData;
++		if (this.s16leData.length < 2) {
++			this.audioData = new Float32Array(1);
++			return this.audioData;
++		}
++		const view = new DataView(this.s16leData.buffer, this.s16leData.byteOffset, this.s16leData.byteLength);
++		const audioData = new Float32Array(this.frameCount);
++		if (this.channelCount === 1) for (let i = 0; i < this.frameCount; i++) audioData[i] = view.getInt16(i * 2, true) / 32768;
++		else for (let i = 0; i < this.frameCount; i++) {
++			const offset = i * 4;
++			audioData[i] = (view.getInt16(offset, true) + view.getInt16(offset + 2, true)) / 65536;
++		}
++		this.audioData = audioData;
++		return audioData;
++	}
++	getRawData(allowVorbis) {
++		if (!this.dataOverridden && this.channelCount === 1) return this.s16leData;
++		return super.getRawData(allowVorbis);
++	}
++};
++function readSF64Samples(buffer, shdrChunk, smplChunk) {
++	const reader = new SF64Reader(buffer, shdrChunk.start, shdrChunk.size);
++	const count = reader.readUint32();
++	const samples = [];
++	for (let i = 0; i < count; i++) {
++		const name = reader.readUtf8(reader.readUint32());
++		const dataStart = reader.readUint64(`SF64 sample ${name} dataStart`);
++		const dataLength = reader.readUint64(`SF64 sample ${name} dataLength`);
++		const sampleRate = reader.readUint32();
++		const channelCount = reader.readUint16();
++		const bitDepth = reader.readUint16();
++		const codec = reader.readUint16();
++		let originalKey = reader.readUint8();
++		if (originalKey > 127) originalKey = 60;
++		const pitchCorrection = reader.readInt8();
++		const loopStartFrame = reader.readUint64(`SF64 sample ${name} loopStartFrame`);
++		const loopEndFrame = reader.readUint64(`SF64 sample ${name} loopEndFrame`);
++		const loopMode = reader.readUint16();
++		reader.readUint16();
++		if (codec !== 0) throw new SyntaxError(`Unsupported SF64 sample codec ${codec} for ${name}.`);
++		if (bitDepth !== 16) throw new SyntaxError(`Unsupported SF64 bit depth ${bitDepth} for ${name}.`);
++		if (channelCount !== 1 && channelCount !== 2) throw new SyntaxError(`Unsupported SF64 channel count ${channelCount} for ${name}.`);
++		const bytesPerFrame = channelCount * 2;
++		if (dataLength % bytesPerFrame !== 0) throw new SyntaxError(`SF64 sample ${name} has a partial PCM frame.`);
++		if (dataStart + dataLength > smplChunk.size) throw new SyntaxError(`SF64 sample ${name} exceeds SMPL chunk bounds.`);
++		const frameCount = dataLength / bytesPerFrame;
++		const loopStart = Math.max(0, Math.min(loopStartFrame, frameCount));
++		const loopEnd = Math.max(loopStart, Math.min(loopEndFrame || frameCount, frameCount));
++		const dataOffset = smplChunk.start + dataStart;
++		const s16leData = new Uint8Array(buffer, dataOffset, dataLength);
++		samples.push(new SF64Sample({
++			name,
++			sampleRate,
++			originalKey,
++			pitchCorrection,
++			loopStart,
++			loopEnd,
++			loopMode,
++			channelCount,
++			frameCount
++		}, s16leData));
++	}
++	return samples;
++}
++function readSF64Instruments(buffer, chunk) {
++	const reader = new SF64Reader(buffer, chunk.start, chunk.size);
++	const count = reader.readUint32();
++	const instruments = [];
++	for (let i = 0; i < count; i++) {
++		const instrument = new BasicInstrument();
++		instrument.name = reader.readUtf8(reader.readUint32());
++		instruments.push({
++			instrument,
++			firstBagIndex: reader.readUint32(),
++			bagCount: reader.readUint32()
++		});
++	}
++	return instruments;
++}
++function readSF64Presets(buffer, chunk, bank) {
++	const reader = new SF64Reader(buffer, chunk.start, chunk.size);
++	const count = reader.readUint32();
++	const presets = [];
++	for (let i = 0; i < count; i++) {
++		const preset = new BasicPreset(bank);
++		preset.name = reader.readUtf8(reader.readUint32());
++		const sf64Bank = reader.readUint32();
++		const program = reader.readUint32();
++		if (program > 127) throw new SyntaxError(`SF64 preset ${preset.name} has unsupported program ${program}.`);
++		preset.program = program;
++		if (sf64Bank === 128) preset.isGMGSDrum = true;
++		else {
++			preset.bankMSB = sf64Bank & 127;
++			preset.bankLSB = sf64Bank >>> 8 & 127;
++		}
++		const firstBagIndex = reader.readUint32();
++		const bagCount = reader.readUint32();
++		preset.library = reader.readUint32();
++		preset.genre = reader.readUint32();
++		preset.morphology = reader.readUint32();
++		presets.push({
++			preset,
++			firstBagIndex,
++			bagCount
++		});
++	}
++	return presets;
++}
++function applySF64InstrumentZones(instrumentRecords, bags, generators, samples) {
++	for (const record of instrumentRecords) {
++		const end = record.firstBagIndex + record.bagCount;
++		if (end > bags.length) throw new SyntaxError(`SF64 instrument ${record.instrument.name} bag range exceeds IBAG length.`);
++		for (let i = record.firstBagIndex; i < end; i++) {
++			const zoneGenerators = sliceSF64Generators(generators, bags[i], "IGEN");
++			const sampleID = getSF64ReferenceGenerator(zoneGenerators, GeneratorTypes.sampleID);
++			if (sampleID === void 0) {
++				record.instrument.globalZone.addGenerators(...getSF64ZoneGenerators(zoneGenerators));
++				continue;
++			}
++			const sample = samples[sampleID];
++			if (!sample) throw new SyntaxError(`SF64 instrument ${record.instrument.name} references missing sample ${sampleID}.`);
++			const zone = record.instrument.createZone(sample);
++			zone.addGenerators(...getSF64ZoneGenerators(zoneGenerators));
++			if (sample.sf64LoopMode === 1 && zone.getGenerator(GeneratorTypes.sampleModes, null) === null && record.instrument.globalZone.getGenerator(GeneratorTypes.sampleModes, null) === null) zone.addGenerators(new Generator(GeneratorTypes.sampleModes, 1, false));
++		}
++	}
++}
++function applySF64PresetZones(presetRecords, bags, generators, instruments) {
++	for (const record of presetRecords) {
++		const end = record.firstBagIndex + record.bagCount;
++		if (end > bags.length) throw new SyntaxError(`SF64 preset ${record.preset.name} bag range exceeds PBAG length.`);
++		for (let i = record.firstBagIndex; i < end; i++) {
++			const zoneGenerators = sliceSF64Generators(generators, bags[i], "PGEN");
++			const instrumentID = getSF64ReferenceGenerator(zoneGenerators, GeneratorTypes.instrument);
++			if (instrumentID === void 0) {
++				record.preset.globalZone.addGenerators(...getSF64ZoneGenerators(zoneGenerators));
++				continue;
++			}
++			const instrument = instruments[instrumentID];
++			if (!instrument) throw new SyntaxError(`SF64 preset ${record.preset.name} references missing instrument ${instrumentID}.`);
++			const zone = record.preset.createZone(instrument);
++			zone.addGenerators(...getSF64ZoneGenerators(zoneGenerators));
++		}
++	}
++}
++var SF64SoundBank = class {
++	static read(buffer) {
++		SpessaLog.group("%cParsing an SF64 file...", ConsoleColors.info);
++		try {
++			const { chunks, version } = readSF64Chunks(buffer);
++			for (const chunkID of SF64_REQUIRED_CHUNKS) getRequiredSF64Chunk(chunks, chunkID);
++			const bank = new BasicSoundBank();
++			const info = readSF64Info(buffer, getRequiredSF64Chunk(chunks, "INFO"));
++			bank.soundBankInfo.name = info.name || "Unnamed SF64";
++			bank.soundBankInfo.version = version;
++			bank.soundBankInfo.soundEngine = "SF64";
++			if (info.author) bank.soundBankInfo.engineer = info.author;
++			if (info.created) bank.soundBankInfo.creationDate = new Date(info.created);
++			if (info.software) bank.soundBankInfo.software = info.software;
++			if (info.comment) bank.soundBankInfo.comment = info.comment;
++			if (info.sourceDevice) bank.soundBankInfo.product = info.sourceDevice;
++			const smplChunk = getRequiredSF64Chunk(chunks, "SMPL");
++			const samples = readSF64Samples(buffer, getRequiredSF64Chunk(chunks, "SHDR"), smplChunk);
++			bank.addSamples(...samples);
++			const instruments = readSF64Instruments(buffer, getRequiredSF64Chunk(chunks, "INST"));
++			bank.addInstruments(...instruments.map((record) => record.instrument));
++			applySF64InstrumentZones(instruments, readSF64Bags(buffer, getRequiredSF64Chunk(chunks, "IBAG")), readSF64Generators(buffer, getRequiredSF64Chunk(chunks, "IGEN")), bank.samples);
++			const presets = readSF64Presets(buffer, getRequiredSF64Chunk(chunks, "PHDR"), bank);
++			bank.addPresets(...presets.map((record) => record.preset));
++			applySF64PresetZones(presets, readSF64Bags(buffer, getRequiredSF64Chunk(chunks, "PBAG")), readSF64Generators(buffer, getRequiredSF64Chunk(chunks, "PGEN")), bank.instruments);
++			bank.flush();
++			SpessaLog.info(`%cParsing finished! %c"${bank.soundBankInfo.name}"%c has %c${bank.presets.length}%c presets,
++        %c${bank.instruments.length}%c instruments and %c${bank.samples.length}%c samples.`, ConsoleColors.info, ConsoleColors.recognized, ConsoleColors.info, ConsoleColors.recognized, ConsoleColors.info, ConsoleColors.recognized, ConsoleColors.info, ConsoleColors.recognized, ConsoleColors.info);
++			SpessaLog.groupEnd();
++			return bank;
++		} catch (error) {
++			SpessaLog.groupEnd();
++			throw error;
++		}
++	}
++};
+ var SoundBankLoader = class {
+ 	/**
+ 	* Loads a sound bank from a file buffer.
+@@ -11774,6 +12187,7 @@ var SoundBankLoader = class {
+ 	* @returns The loaded sound bank, a BasicSoundBank instance.
+ 	*/
+ 	static fromArrayBuffer(buffer) {
++		if (isSF64Buffer(buffer)) return SF64SoundBank.read(buffer);
+ 		if (readBinaryStringIndexed(new IndexedByteArray(buffer.slice(8, 12)), 4).toLowerCase() === "dls ") return this.loadDLS(buffer);
+ 		return new SoundFont2(buffer, false);
+ 	}
