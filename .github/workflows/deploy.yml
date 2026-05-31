@@ -3,7 +3,7 @@ name: Deploy SpessaSynth
 on:
     # Runs on pushes targeting the default branch
     push:
-        branches: ["master"]
+        branches: ["main"]
 
     workflow_dispatch:
 
@@ -24,12 +24,13 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - name: Checkout
-              uses: actions/checkout@v6
+              uses: actions/checkout@v4
 
             - name: Set up Node
-              uses: actions/setup-node@v6
+              uses: actions/setup-node@v4
               with:
-                  node-version: latest
+                  node-version: 22
+                  cache: npm
 
             - name: Show versions
               run: |
@@ -44,6 +45,9 @@ jobs:
 
             - name: Build
               run: npm run build
+
+            - name: Prepare static Pages artifact
+              run: touch dist/.nojekyll
 
             - name: Setup Pages
               uses: actions/configure-pages@v5

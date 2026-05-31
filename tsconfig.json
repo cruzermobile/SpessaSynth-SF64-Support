@@ -29,7 +29,9 @@
         "allowImportingTsExtensions": true,
         "types": ["node"],
         "paths": {
-            "sl-web-ogg": ["./externals/sl-web-ogg/dist/index.min.js"]
+            "sl-web-ogg": [
+                "./src/externals/sl-web-ogg/dist/types/index.d.ts"
+            ]
         }
     },
     "include": ["src", "src/externals/encode_vorbis.ts"],

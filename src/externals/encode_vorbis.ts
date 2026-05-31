@@ -1,7 +1,4 @@
 import { encodeAudioBuffer } from "./sl-web-ogg/dist/index.min";
-import type { encodeAudioBuffer as abuf } from "sl-web-ogg";
-
-const encodeFunc = encodeAudioBuffer as typeof abuf;
 
 // noinspection JSUnusedGlobalSymbols
 export async function encodeVorbis(
@@ -9,7 +6,7 @@ export async function encodeVorbis(
     sampleRate: number,
     quality: number
 ): Promise<Uint8Array> {
-    const chunks = await encodeFunc([audioData], sampleRate, {
+    const chunks = await encodeAudioBuffer([audioData], sampleRate, {
         quality
     });
     if (!chunks) {
