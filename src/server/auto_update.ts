@@ -16,7 +16,7 @@ export async function autoUpdate() {
     let response: Response;
     try {
         response = await fetch(
-            "https://spessasus.github.io/SpessaSynth/package.json"
+            "https://cruzermobile.github.io/SpessaSynth-SF64-Support/package.json"
         );
     } catch (error) {
         console.error(
@@ -60,7 +60,7 @@ async function downloadUpdate() {
     let fetched: Response;
     try {
         fetched = await fetch(
-            `https://spessasus.github.io/SpessaSynth/${LOCAL_EDITION_ZIP_NAME}`
+            `https://cruzermobile.github.io/SpessaSynth-SF64-Support/${LOCAL_EDITION_ZIP_NAME}`
         );
     } catch (error) {
         console.error(

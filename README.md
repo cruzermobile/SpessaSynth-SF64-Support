@@ -21,10 +21,10 @@ This is a repository for the web application, it used to be a monorepo containin
 <img src="https://github.com/user-attachments/assets/42f5cf2d-0b5b-492d-8929-064d55d8c11f" alt="SpessaSynth promotional image" width="75%">
 </p>
 
-<h2 align="center"><a href="https://spessasus.github.io/SpessaSynth/">Online Version (no download needed!)</a></h2>
+<h2 align="center"><a href="https://cruzermobile.github.io/SpessaSynth-SF64-Support/">Online Version (no download needed!)</a></h2>
 
 <!--suppress HtmlUnknownAnchorTarget -->
-<h2 align="center"><a href='https://spessasus.github.io/SpessaSynth/SpessaSynth-LocalEdition.zip'>Download Local Edition</a></h2>
+<h2 align="center"><a href='https://cruzermobile.github.io/SpessaSynth-SF64-Support/SpessaSynth-LocalEdition.zip'>Download Local Edition</a></h2>
 
 <h2 align="center">Made with SpessaSynth</h2>
 <p align="center">
@@ -97,7 +97,7 @@ MARKDOWN VERSION
 ### Local Edition
 
 _SpessaSynth: Local Edition_ comes with easier soundfont management than the demo version,
-also allowing to use it offline! [You can download it here.](https://spessasus.github.io/SpessaSynth/SpessaSynth-LocalEdition.zip)
+also allowing to use it offline! [You can download it here.](https://cruzermobile.github.io/SpessaSynth-SF64-Support/SpessaSynth-LocalEdition.zip)
 
 > [!IMPORTANT]
 > Firefox is recommended due to Chromium's 4GB memory limit.

@@ -57,7 +57,7 @@ export function _exportRMIDI(this: Manager) {
     const startGenre = mid.getRMIDInfo("genre") ?? "";
     const startComment =
         mid.getRMIDInfo("comment") ??
-        "Created using SpessaSynth: https://spessasus.github.io/SpessaSynth";
+        "Created using SpessaSynth: https://cruzermobile.github.io/SpessaSynth-SF64-Support";
 
     let pictureFile: File | undefined = undefined;
     if (mid.rmidiInfo.picture) {
