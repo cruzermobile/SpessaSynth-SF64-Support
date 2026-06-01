@@ -59,7 +59,14 @@ const localStorageName = "spessasynth-settings-1";
 const dbName = "spessasynth-db";
 const objectStoreName = "soundFontStore";
 
-let sfBuffer: ArrayBuffer | undefined = undefined;
+let sfBuffer: ArrayBuffer | Blob | undefined = undefined;
+
+async function isSF64File(file: File): Promise<boolean> {
+    if (file.size < 4) {
+        return false;
+    }
+    return new TextDecoder().decode(await file.slice(0, 4).arrayBuffer()) === "SF64";
+}
 
 // Load update title
 const updateTitle = document.querySelector("#update_title");
@@ -238,6 +245,9 @@ async function demoInit(initLocale: LocaleCode) {
     loadingMessage.textContent = localeManager.getLocaleString(
         "locale.synthInit.startingSynthesizer"
     );
+    if (!(sfBuffer instanceof ArrayBuffer)) {
+        throw new TypeError("Initial sound bank must be an ArrayBuffer.");
+    }
     window.manager = new Manager(context, sfBuffer, localeManager);
     window.manager.sfError = (e) => {
         changeIcon(getExclamationSvg(256));
@@ -468,9 +478,11 @@ sfInput.addEventListener("change", (e) => {
                 );
             const parseStart = performance.now() / 1000;
             // Parse the soundfont
-            let soundFontBuffer;
+            let soundFontBuffer: ArrayBuffer | File;
             try {
-                soundFontBuffer = await file.arrayBuffer();
+                soundFontBuffer = (await isSF64File(file))
+                    ? file
+                    : await file.arrayBuffer();
                 sfBuffer = soundFontBuffer;
             } catch (error) {
                 loadingMessage.textContent =
@@ -500,7 +512,10 @@ sfInput.addEventListener("change", (e) => {
                 console.error(e);
             };
 
-            if (soundFontBuffer.byteLength <= 1_153_433_617) {
+            if (
+                soundFontBuffer instanceof ArrayBuffer &&
+                soundFontBuffer.byteLength <= 1_153_433_617
+            ) {
                 loadingMessage.textContent =
                     window.manager.localeManager.getLocaleString(
                         "locale.synthInit.savingSoundfont"

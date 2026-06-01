@@ -30,6 +30,9 @@ export async function writeSF2(
     if (this.synth instanceof WorkerSynthesizer) {
         return this.synth.writeSF2(options);
     }
+    if (!(this.sBankBuffer instanceof ArrayBuffer)) {
+        throw new TypeError("Large SF64 files require worker mode for export.");
+    }
 
     const sfBin = mid.embeddedSoundBank ?? this.sBankBuffer;
 

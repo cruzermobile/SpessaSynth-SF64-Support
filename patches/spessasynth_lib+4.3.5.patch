@@ -1,0 +1,56 @@
+diff --git a/node_modules/spessasynth_lib/dist/index.d.ts b/node_modules/spessasynth_lib/dist/index.d.ts
+index c8177cc..16a4952 100644
+--- a/node_modules/spessasynth_lib/dist/index.d.ts
++++ b/node_modules/spessasynth_lib/dist/index.d.ts
+@@ -64,7 +64,7 @@ declare class SoundBankManager {
+    * @param id The sound bank's unique identifier.
+    * @param bankOffset The sound bank's bank offset. Default is 0.
+    */
+-  addSoundBank(soundBankBuffer: ArrayBuffer, id: string, bankOffset?: number): Promise<void>;
++  addSoundBank(soundBankBuffer: ArrayBuffer | Blob, id: string, bankOffset?: number): Promise<void>;
+   /**
+    * Deletes a sound bank with the given ID.
+    * @param id The sound bank to delete.
+diff --git a/node_modules/spessasynth_lib/dist/index.js b/node_modules/spessasynth_lib/dist/index.js
+index b3eff7e..0d9bfc3 100644
+--- a/node_modules/spessasynth_lib/dist/index.js
++++ b/node_modules/spessasynth_lib/dist/index.js
+@@ -135,7 +135,7 @@ var SoundBankManager = class {
+ 			soundBankBuffer,
+ 			bankOffset,
+ 			id
+-		}, [soundBankBuffer]);
++		}, soundBankBuffer instanceof ArrayBuffer ? [soundBankBuffer] : []);
+ 		await this.awaitResponse();
+ 		const found = this.soundBankList.find((s) => s.id === id);
+ 		if (found === void 0) this.soundBankList.push({
+@@ -1626,9 +1626,26 @@ var BasicSynthesizerCore = class {
+ 					let font;
+ 					switch (sfManMsg.type) {
+ 						case "addSoundBank":
+-							font = SoundBankLoader.fromArrayBuffer(sfManMsg.data.soundBankBuffer);
+-							sfManager.addSoundBank(font, sfManMsg.data.id, sfManMsg.data.bankOffset);
+-							this.postReady("soundBankManager", null);
++							if (typeof Blob !== "undefined" && sfManMsg.data.soundBankBuffer instanceof Blob) {
++								void (async () => {
++									try {
++										font = await SoundBankLoader.fromBlob(sfManMsg.data.soundBankBuffer);
++										sfManager.addSoundBank(font, sfManMsg.data.id, sfManMsg.data.bankOffset);
++										this.postReady("soundBankManager", null);
++									} catch (error) {
++										this.post({
++											type: "soundBankError",
++											data: error,
++											currentTime: this.synthesizer.currentTime
++										});
++										this.postReady("soundBankManager", null);
++									}
++								})();
++							} else {
++								font = SoundBankLoader.fromArrayBuffer(sfManMsg.data.soundBankBuffer);
++								sfManager.addSoundBank(font, sfManMsg.data.id, sfManMsg.data.bankOffset);
++								this.postReady("soundBankManager", null);
++							}
+ 							break;
+ 						case "deleteSoundBank":
+ 							sfManager.deleteSoundBank(sfManMsg.data);

@@ -1,8 +1,23 @@
+diff --git a/node_modules/spessasynth_core/dist/index.d.ts b/node_modules/spessasynth_core/dist/index.d.ts
+index 2d20f4e..9d80635 100644
+--- a/node_modules/spessasynth_core/dist/index.d.ts
++++ b/node_modules/spessasynth_core/dist/index.d.ts
+@@ -1090,8 +1090,9 @@ declare class SoundBankLoader {
+    * Loads a sound bank from a file buffer.
+    * @param buffer The binary file buffer to load.
+    * @returns The loaded sound bank, a BasicSoundBank instance.
+-   */
++  */
+   static fromArrayBuffer(buffer: ArrayBuffer): BasicSoundBank;
++  static fromBlob(blob: Blob): Promise<BasicSoundBank>;
+   private static loadDLS;
+ }
+ //#endregion
 diff --git a/node_modules/spessasynth_core/dist/index.js b/node_modules/spessasynth_core/dist/index.js
-index cd9e028..1caa194 100644
+index cd9e028..a669688 100644
 --- a/node_modules/spessasynth_core/dist/index.js
 +++ b/node_modules/spessasynth_core/dist/index.js
-@@ -11767,6 +11767,419 @@ var SoundFont2 = class extends BasicSoundBank {
+@@ -11767,6 +11767,609 @@ var SoundFont2 = class extends BasicSoundBank {
  };
  //#endregion
  //#region src/soundbank/sound_bank_loader.ts
@@ -89,10 +104,51 @@ index cd9e028..1caa194 100644
 +		this.currentIndex = index;
 +	}
 +};
++var SF64BlobReader = class {
++	blob;
++	currentIndex;
++	endIndex;
++	constructor(blob, offset = 0, length = blob.size - offset) {
++		this.blob = blob;
++		this.currentIndex = offset;
++		this.endIndex = offset + length;
++	}
++	ensure(byteLength) {
++		if (this.currentIndex + byteLength > this.endIndex) throw new SyntaxError("Unexpected end of SF64 data.");
++	}
++	async readBuffer(byteLength) {
++		this.ensure(byteLength);
++		const buffer = await this.blob.slice(this.currentIndex, this.currentIndex + byteLength).arrayBuffer();
++		this.currentIndex += byteLength;
++		return buffer;
++	}
++	async readAscii(byteLength) {
++		const bytes = new Uint8Array(await this.readBuffer(byteLength));
++		let out = "";
++		for (let i = 0; i < byteLength; i++) out += String.fromCharCode(bytes[i]);
++		return out;
++	}
++	async readUint16() {
++		return new DataView(await this.readBuffer(2)).getUint16(0, true);
++	}
++	async readUint64(label) {
++		const value = new DataView(await this.readBuffer(8)).getBigUint64(0, true);
++		if (value > SF64_MAX_SAFE_INTEGER) throw new RangeError(`${label} is too large for this JavaScript runtime.`);
++		return Number(value);
++	}
++	skipTo(index) {
++		if (index > this.endIndex) throw new SyntaxError("Unexpected end of SF64 data.");
++		this.currentIndex = index;
++	}
++};
 +function isSF64Buffer(buffer) {
 +	if (buffer.byteLength < 4) return false;
 +	const bytes = new Uint8Array(buffer, 0, 4);
 +	return bytes[0] === 83 && bytes[1] === 70 && bytes[2] === 54 && bytes[3] === 52;
++}
++async function isSF64Blob(blob) {
++	if (blob.size < 4) return false;
++	return isSF64Buffer(await blob.slice(0, 4).arrayBuffer());
 +}
 +function readSF64Chunks(buffer) {
 +	const reader = new SF64Reader(buffer);
@@ -126,6 +182,42 @@ index cd9e028..1caa194 100644
 +			minor
 +		}
 +	};
++}
++async function readSF64ChunksFromBlob(blob) {
++	const reader = new SF64BlobReader(blob);
++	const magic = await reader.readAscii(4);
++	if (magic !== "SF64") throw new SyntaxError(`Invalid SF64 magic: ${magic}`);
++	const major = await reader.readUint16();
++	const minor = await reader.readUint16();
++	if (major !== 1) throw new SyntaxError(`Unsupported SF64 major version ${major}.`);
++	const declaredFileSize = await reader.readUint64("SF64 file size");
++	if (declaredFileSize > blob.size) throw new SyntaxError(`SF64 file size ${declaredFileSize} exceeds file size ${blob.size}.`);
++	if (declaredFileSize < blob.size) SpessaLog.warn(`SF64 file has ${blob.size - declaredFileSize} trailing bytes.`);
++	const chunks = /* @__PURE__ */ new Map();
++	const limit = declaredFileSize || blob.size;
++	while (reader.currentIndex + 12 <= limit) {
++		const id = await reader.readAscii(4);
++		const size = await reader.readUint64(`SF64 ${id} chunk size`);
++		const dataStart = reader.currentIndex;
++		const dataEnd = dataStart + size;
++		if (dataEnd > limit) throw new SyntaxError(`SF64 ${id} chunk exceeds declared file size.`);
++		chunks.set(id, {
++			id,
++			start: dataStart,
++			size
++		});
++		reader.skipTo(dataEnd + size % 2);
++	}
++	return {
++		chunks,
++		version: {
++			major,
++			minor
++		}
++	};
++}
++async function readSF64ChunkBlobBuffer(blob, chunk) {
++	return blob.slice(chunk.start, chunk.start + chunk.size).arrayBuffer();
 +}
 +function getRequiredSF64Chunk(chunks, id) {
 +	const chunk = chunks.get(id);
@@ -226,24 +318,39 @@ index cd9e028..1caa194 100644
 +}
 +var SF64Sample = class extends BasicSample {
 +	s16leData;
++	blob;
++	dataOffset;
++	dataLength;
 +	channelCount;
 +	frameCount;
 +	sf64LoopMode;
-+	constructor(header, s16leData) {
++	constructor(header, s16leData, blob, dataOffset = 0, dataLength = 0) {
 +		super(header.name, header.sampleRate, header.originalKey, header.pitchCorrection, SampleTypes.monoSample, header.loopStart, header.loopEnd);
 +		this.s16leData = s16leData;
++		this.blob = blob;
++		this.dataOffset = dataOffset;
++		this.dataLength = dataLength;
 +		this.channelCount = header.channelCount;
 +		this.frameCount = header.frameCount;
 +		this.sf64LoopMode = header.loopMode;
 +		this.dataOverridden = false;
 +	}
++	getS16LEData() {
++		if (this.s16leData) return this.s16leData;
++		if (!this.blob) return new Uint8Array(0);
++		if (typeof FileReaderSync === "undefined") throw new Error("Large SF64 samples must be decoded in worker mode.");
++		const buffer = new FileReaderSync().readAsArrayBuffer(this.blob.slice(this.dataOffset, this.dataOffset + this.dataLength));
++		this.s16leData = new Uint8Array(buffer);
++		return this.s16leData;
++	}
 +	getAudioData() {
 +		if (this.audioData) return this.audioData;
-+		if (this.s16leData.length < 2) {
++		const s16leData = this.getS16LEData();
++		if (s16leData.length < 2) {
 +			this.audioData = new Float32Array(1);
 +			return this.audioData;
 +		}
-+		const view = new DataView(this.s16leData.buffer, this.s16leData.byteOffset, this.s16leData.byteLength);
++		const view = new DataView(s16leData.buffer, s16leData.byteOffset, s16leData.byteLength);
 +		const audioData = new Float32Array(this.frameCount);
 +		if (this.channelCount === 1) for (let i = 0; i < this.frameCount; i++) audioData[i] = view.getInt16(i * 2, true) / 32768;
 +		else for (let i = 0; i < this.frameCount; i++) {
@@ -254,7 +361,7 @@ index cd9e028..1caa194 100644
 +		return audioData;
 +	}
 +	getRawData(allowVorbis) {
-+		if (!this.dataOverridden && this.channelCount === 1) return this.s16leData;
++		if (!this.dataOverridden && this.channelCount === 1) return this.getS16LEData();
 +		return super.getRawData(allowVorbis);
 +	}
 +};
@@ -299,6 +406,49 @@ index cd9e028..1caa194 100644
 +			channelCount,
 +			frameCount
 +		}, s16leData));
++	}
++	return samples;
++}
++function readSF64SamplesFromHeaderBuffer(shdrBuffer, smplChunk, blob) {
++	const reader = new SF64Reader(shdrBuffer);
++	const count = reader.readUint32();
++	const samples = [];
++	for (let i = 0; i < count; i++) {
++		const name = reader.readUtf8(reader.readUint32());
++		const dataStart = reader.readUint64(`SF64 sample ${name} dataStart`);
++		const dataLength = reader.readUint64(`SF64 sample ${name} dataLength`);
++		const sampleRate = reader.readUint32();
++		const channelCount = reader.readUint16();
++		const bitDepth = reader.readUint16();
++		const codec = reader.readUint16();
++		let originalKey = reader.readUint8();
++		if (originalKey > 127) originalKey = 60;
++		const pitchCorrection = reader.readInt8();
++		const loopStartFrame = reader.readUint64(`SF64 sample ${name} loopStartFrame`);
++		const loopEndFrame = reader.readUint64(`SF64 sample ${name} loopEndFrame`);
++		const loopMode = reader.readUint16();
++		reader.readUint16();
++		if (codec !== 0) throw new SyntaxError(`Unsupported SF64 sample codec ${codec} for ${name}.`);
++		if (bitDepth !== 16) throw new SyntaxError(`Unsupported SF64 bit depth ${bitDepth} for ${name}.`);
++		if (channelCount !== 1 && channelCount !== 2) throw new SyntaxError(`Unsupported SF64 channel count ${channelCount} for ${name}.`);
++		const bytesPerFrame = channelCount * 2;
++		if (dataLength % bytesPerFrame !== 0) throw new SyntaxError(`SF64 sample ${name} has a partial PCM frame.`);
++		if (dataStart + dataLength > smplChunk.size) throw new SyntaxError(`SF64 sample ${name} exceeds SMPL chunk bounds.`);
++		const frameCount = dataLength / bytesPerFrame;
++		const loopStart = Math.max(0, Math.min(loopStartFrame, frameCount));
++		const loopEnd = Math.max(loopStart, Math.min(loopEndFrame || frameCount, frameCount));
++		const dataOffset = smplChunk.start + dataStart;
++		samples.push(new SF64Sample({
++			name,
++			sampleRate,
++			originalKey,
++			pitchCorrection,
++			loopStart,
++			loopEnd,
++			loopMode,
++			channelCount,
++			frameCount
++		}, void 0, blob, dataOffset, dataLength));
 +	}
 +	return samples;
 +}
@@ -418,15 +568,77 @@ index cd9e028..1caa194 100644
 +			throw error;
 +		}
 +	}
++	static async readBlob(blob) {
++		SpessaLog.group("%cParsing an SF64 file...", ConsoleColors.info);
++		try {
++			const { chunks, version } = await readSF64ChunksFromBlob(blob);
++			for (const chunkID of SF64_REQUIRED_CHUNKS) getRequiredSF64Chunk(chunks, chunkID);
++			const bank = new BasicSoundBank();
++			const info = readSF64Info(await readSF64ChunkBlobBuffer(blob, getRequiredSF64Chunk(chunks, "INFO")), {
++				start: 0,
++				size: getRequiredSF64Chunk(chunks, "INFO").size
++			});
++			bank.soundBankInfo.name = info.name || "Unnamed SF64";
++			bank.soundBankInfo.version = version;
++			bank.soundBankInfo.soundEngine = "SF64";
++			if (info.author) bank.soundBankInfo.engineer = info.author;
++			if (info.created) bank.soundBankInfo.creationDate = new Date(info.created);
++			if (info.software) bank.soundBankInfo.software = info.software;
++			if (info.comment) bank.soundBankInfo.comment = info.comment;
++			if (info.sourceDevice) bank.soundBankInfo.product = info.sourceDevice;
++			const smplChunk = getRequiredSF64Chunk(chunks, "SMPL");
++			const samples = readSF64SamplesFromHeaderBuffer(await readSF64ChunkBlobBuffer(blob, getRequiredSF64Chunk(chunks, "SHDR")), smplChunk, blob);
++			bank.addSamples(...samples);
++			const instruments = readSF64Instruments(await readSF64ChunkBlobBuffer(blob, getRequiredSF64Chunk(chunks, "INST")), {
++				start: 0,
++				size: getRequiredSF64Chunk(chunks, "INST").size
++			});
++			bank.addInstruments(...instruments.map((record) => record.instrument));
++			applySF64InstrumentZones(instruments, readSF64Bags(await readSF64ChunkBlobBuffer(blob, getRequiredSF64Chunk(chunks, "IBAG")), {
++				start: 0,
++				size: getRequiredSF64Chunk(chunks, "IBAG").size
++			}), readSF64Generators(await readSF64ChunkBlobBuffer(blob, getRequiredSF64Chunk(chunks, "IGEN")), {
++				start: 0,
++				size: getRequiredSF64Chunk(chunks, "IGEN").size
++			}), bank.samples);
++			const presets = readSF64Presets(await readSF64ChunkBlobBuffer(blob, getRequiredSF64Chunk(chunks, "PHDR")), {
++				start: 0,
++				size: getRequiredSF64Chunk(chunks, "PHDR").size
++			}, bank);
++			bank.addPresets(...presets.map((record) => record.preset));
++			applySF64PresetZones(presets, readSF64Bags(await readSF64ChunkBlobBuffer(blob, getRequiredSF64Chunk(chunks, "PBAG")), {
++				start: 0,
++				size: getRequiredSF64Chunk(chunks, "PBAG").size
++			}), readSF64Generators(await readSF64ChunkBlobBuffer(blob, getRequiredSF64Chunk(chunks, "PGEN")), {
++				start: 0,
++				size: getRequiredSF64Chunk(chunks, "PGEN").size
++			}), bank.instruments);
++			bank.flush();
++			SpessaLog.info(`%cParsing finished! %c"${bank.soundBankInfo.name}"%c has %c${bank.presets.length}%c presets,
++        %c${bank.instruments.length}%c instruments and %c${bank.samples.length}%c samples.`, ConsoleColors.info, ConsoleColors.recognized, ConsoleColors.info, ConsoleColors.recognized, ConsoleColors.info, ConsoleColors.recognized, ConsoleColors.info, ConsoleColors.recognized, ConsoleColors.info);
++			SpessaLog.groupEnd();
++			return bank;
++		} catch (error) {
++			SpessaLog.groupEnd();
++			throw error;
++		}
++	}
 +};
  var SoundBankLoader = class {
  	/**
  	* Loads a sound bank from a file buffer.
-@@ -11774,6 +12187,7 @@ var SoundBankLoader = class {
+@@ -11774,9 +12377,14 @@ var SoundBankLoader = class {
  	* @returns The loaded sound bank, a BasicSoundBank instance.
  	*/
  	static fromArrayBuffer(buffer) {
 +		if (isSF64Buffer(buffer)) return SF64SoundBank.read(buffer);
  		if (readBinaryStringIndexed(new IndexedByteArray(buffer.slice(8, 12)), 4).toLowerCase() === "dls ") return this.loadDLS(buffer);
  		return new SoundFont2(buffer, false);
+ 	}
++	static async fromBlob(blob) {
++		if (await isSF64Blob(blob)) return SF64SoundBank.readBlob(blob);
++		return this.fromArrayBuffer(await blob.arrayBuffer());
++	}
+ 	static loadDLS(buffer) {
+ 		return DownloadableSounds.read(buffer).toSF();
  	}

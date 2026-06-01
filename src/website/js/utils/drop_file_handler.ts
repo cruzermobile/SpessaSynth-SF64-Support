@@ -11,7 +11,7 @@ export class DropFileHandler {
      */
     public constructor(
         midiCallback: (arg0: MIDIFile[]) => unknown,
-        soundFontCallback: (arg0: ArrayBuffer) => unknown
+        soundFontCallback: (arg0: ArrayBuffer | Blob) => unknown
     ) {
         const dragPrompt = document.querySelectorAll(".drop_prompt")[0];
         document.body.addEventListener("dragover", (e) => {
@@ -36,14 +36,15 @@ export class DropFileHandler {
 
                     for (const file of e.dataTransfer.files) {
                         const name = file.name;
-                        const buf = await file.arrayBuffer();
+                        const headerBuffer = await file.slice(0, 12).arrayBuffer();
                         // Identify the file
                         const decoder = new TextDecoder();
-                        const magic = decoder.decode(buf.slice(0, 4));
+                        const magic = decoder.decode(headerBuffer.slice(0, 4));
                         if (magic === "SF64") {
-                            soundFontCallback(buf);
+                            soundFontCallback(file);
                             continue;
                         }
+                        const buf = await file.arrayBuffer();
                         // Check for RIFF
                         if (magic === "RIFF") {
                             // Riff, check if RMID, otherwise soundfont

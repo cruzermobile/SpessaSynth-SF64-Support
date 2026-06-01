@@ -52,6 +52,9 @@ export async function renderAudioData(
             eventsEnabled: false,
             effectsEnabled: !separated
         });
+        if (!(this.sBankBuffer instanceof ArrayBuffer)) {
+            throw new TypeError("Large SF64 files require worker mode to render.");
+        }
         console.info("Parsing and loading the sound bank in the main thread.");
         const sf = SoundBankLoader.fromArrayBuffer(this.sBankBuffer);
         rendererSynth.soundBankManager.addSoundBank(sf, SOUND_BANK_ID);

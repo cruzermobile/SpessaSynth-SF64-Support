@@ -23,6 +23,9 @@ export async function writeDLS(
     }
 
     const mid = await this.seq.getMIDI();
+    if (!(this.sBankBuffer instanceof ArrayBuffer)) {
+        throw new TypeError("Large SF64 files require worker mode for export.");
+    }
 
     const sfBin = mid.embeddedSoundBank ?? this.sBankBuffer;
 

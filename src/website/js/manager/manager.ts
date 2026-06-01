@@ -42,6 +42,8 @@ document.body.classList.add("load");
 
 const ENABLE_DEBUG = false;
 
+type SoundBankSource = ArrayBuffer | Blob;
+
 function isSF64SoundBank(buffer: ArrayBuffer): boolean {
     if (buffer.byteLength < 4) {
         return false;
@@ -64,7 +66,7 @@ export class Manager {
     public seq?: Sequencer;
     public readonly showExportMenu = showExportMenu.bind(this);
     public seqUI?: SequencerUI;
-    public sBankBuffer: ArrayBuffer;
+    public sBankBuffer: SoundBankSource;
     protected isExporting;
     protected keyboardMode = false;
     protected readonly showAudioExportMenu = showAudioExportMenu.bind(this);
@@ -174,17 +176,20 @@ export class Manager {
         );
     }
 
-    public async reloadSf(sf: ArrayBuffer) {
+    public async reloadSf(sf: SoundBankSource) {
         if (sf === this.sBankBuffer) {
             return;
         }
         this.seq?.pause();
-        const text = sf.slice(8, 12);
-        const header = util.readBinaryStringIndexed(
-            new IndexedByteArray(text),
-            4
-        );
-        const isDLS = header.toLowerCase() === "dls " && !this.isLocalEdition;
+        let isDLS = false;
+        if (sf instanceof ArrayBuffer) {
+            const text = sf.slice(8, 12);
+            const header = util.readBinaryStringIndexed(
+                new IndexedByteArray(text),
+                4
+            );
+            isDLS = header.toLowerCase() === "dls " && !this.isLocalEdition;
+        }
         await this.setSF(sf);
         if (isDLS) {
             setTimeout(() => {
@@ -238,12 +243,15 @@ export class Manager {
         this.saveUrl(url, name);
     }
 
-    private async setSF(sf: ArrayBuffer) {
+    private async setSF(sf: SoundBankSource) {
         if (!this.synth) {
             throw new Error("Unexpected lack of synth!");
         }
         this.sBankBuffer = sf;
-        if (this.synth instanceof WorkletSynthesizer) {
+        if (sf instanceof Blob && this.synth instanceof WorkletSynthesizer) {
+            throw new TypeError("Large SF64 files require worker mode.");
+        }
+        if (sf instanceof ArrayBuffer && this.synth instanceof WorkletSynthesizer) {
             console.info("Copying array buffer for reuse...");
             const copy = sf.slice();
             console.info("Copy created, transferring to worklet...");
