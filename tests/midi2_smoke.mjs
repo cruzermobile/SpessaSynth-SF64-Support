@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { BasicMIDI, MIDIMessageTypes } from "spessasynth_core";
+import { BasicMIDI, MIDIChannel, MIDIMessageTypes } from "spessasynth_core";
 
 const textEncoder = new TextEncoder();
 
@@ -124,5 +124,8 @@ const sysex = raw.tracks[0].events.find(
 );
 assert.ok(sysex);
 assert.deepEqual([...sysex.data], [0x7e, 0x7f, 0x09, 0xf7]);
+
+const patchlessChannel = Object.create(MIDIChannel.prototype);
+patchlessChannel.setPatch(undefined);
 
 console.log("MIDI 2.0 smoke fixtures passed.");
