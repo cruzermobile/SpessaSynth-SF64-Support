@@ -8,6 +8,7 @@
         "test:types": "eslint --cache && tsc -b",
         "postinstall": "patch-package",
         "start": "node src/build/start.ts",
+        "test:midi2": "node tests/midi2_smoke.mjs",
         "build": "npm run test:types && npm run build:fast",
         "build:fast": "node src/build/build.ts",
         "format": "prettier . --write",

@@ -29,7 +29,9 @@ export class Ut {
             ".kar",
             ".rmi",
             ".xmf",
-            ".mxmf"
+            ".mxmf",
+            ".midi2",
+            ".ump"
         ];
 
         // Loop through extensions and remove them, case-insensitive
