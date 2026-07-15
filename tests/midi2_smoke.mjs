@@ -61,7 +61,7 @@ const clipBuffer = concat(
     dcs(0),
     packet(0xd << 28, 50_000_000, 0, 0),
     dcs(0),
-    midi2ChannelVoice(0, 0xc0, 0, 1, (5 << 24) | (2 << 8) | 3),
+    midi2ChannelVoice(1, 0xc0, 0, 1, (5 << 24) | (2 << 8) | 3),
     dcs(0),
     midi2ChannelVoice(1, 0x90, 60, 0, 0x8000 << 16),
     dcs(240),
@@ -94,6 +94,14 @@ assert.ok(perNoteBend);
 assert.equal(perNoteBend.midi2.note, 60);
 assert.equal(perNoteBend.midi2.channel, 16);
 assert.equal(perNoteBend.data[1] << 7 | perNoteBend.data[0], 12_288);
+
+const syntheticSoundBank = {
+    getPreset(patch) {
+        return { ...patch, isDrum: patch.isGMGSDrum, name: "Synthetic" };
+    }
+};
+const usedPrograms = clip.getUsedProgramsAndKeys(syntheticSoundBank);
+assert.equal(usedPrograms.size, 1);
 
 const rawUMPBuffer = concat(
     dctpq(240),

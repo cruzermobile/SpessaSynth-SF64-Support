@@ -108,7 +108,7 @@ index 2d20f4e..6bf1415 100644
  //# sourceMappingURL=index.d.ts.map
 \ No newline at end of file
 diff --git a/node_modules/spessasynth_core/dist/index.js b/node_modules/spessasynth_core/dist/index.js
-index cd9e028..c43c888 100644
+index cd9e028..ec342c4 100644
 --- a/node_modules/spessasynth_core/dist/index.js
 +++ b/node_modules/spessasynth_core/dist/index.js
 @@ -1138,15 +1138,45 @@ var MIDIMessage = class {
@@ -203,6 +203,15 @@ index cd9e028..c43c888 100644
  		const targetBank = BankSelectHacks.addBankOffset(targetPreset.bankMSB, bankOffset, system === "xg");
  		track.addEvents(indexToAdd, new MIDIMessage(ticks, MIDIMessageTypes.controllerChange | midiChannel, new IndexedByteArray([MIDIControllers.bankSelect, targetBank])));
  	}
+@@ -2380,7 +2417,7 @@ var ParameterTracker = class {
+ */
+ function getUsedProgramsAndKeys(mid, soundBank) {
+ 	SpessaLog.groupCollapsed("%cSearching for all used programs and keys...", ConsoleColors.info);
+-	const channelsAmount = 16 + Math.max(...mid.portChannelOffsetMap);
++	const channelsAmount = Math.max(16 + Math.max(...mid.portChannelOffsetMap), mid.midi2ChannelCount ?? 16);
+ 	const channels = [];
+ 	let system = "gs";
+ 	let masterKeyShift = 0;
 @@ -2436,9 +2473,10 @@ function getUsedProgramsAndKeys(mid, soundBank) {
  		const status = e.statusByte & 240;
  		if (status !== MIDIMessageTypes.noteOn && status !== MIDIMessageTypes.controllerChange && status !== MIDIMessageTypes.programChange && status !== MIDIMessageTypes.systemExclusive) continue;
