@@ -108,7 +108,7 @@ index 2d20f4e..6bf1415 100644
  //# sourceMappingURL=index.d.ts.map
 \ No newline at end of file
 diff --git a/node_modules/spessasynth_core/dist/index.js b/node_modules/spessasynth_core/dist/index.js
-index cd9e028..2f276f8 100644
+index cd9e028..c43c888 100644
 --- a/node_modules/spessasynth_core/dist/index.js
 +++ b/node_modules/spessasynth_core/dist/index.js
 @@ -1138,15 +1138,45 @@ var MIDIMessage = class {
@@ -167,7 +167,43 @@ index cd9e028..2f276f8 100644
  	const channels = [];
  	for (let i = 0; i < channelsAmount; i++) channels.push({
  		program: 0,
-@@ -2436,9 +2466,10 @@ function getUsedProgramsAndKeys(mid, soundBank) {
+@@ -2099,6 +2129,10 @@ function correctBankOffsetInternal(mid, bankOffset, soundBank) {
+ 				isGMGSDrum: ch.isDrum
+ 			};
+ 			const targetPreset = soundBank.getPreset(patch, system);
++			if (!targetPreset) {
++				SpessaLog.warn(`No replacement preset found for ${MIDIPatchTools.toMIDIString(patch)}. Keeping original program change.`);
++				return;
++			}
+ 			SpessaLog.info(`%cInput patch: %c${MIDIPatchTools.toMIDIString(patch)}%c. Channel %c${chNum}%c. Changing patch to ${targetPreset.toString()}.`, ConsoleColors.info, ConsoleColors.unrecognized, ConsoleColors.info, ConsoleColors.recognized, ConsoleColors.info);
+ 			e.data[0] = targetPreset.program;
+ 			if (targetPreset.isGMGSDrum && BankSelectHacks.isSystemXG(system)) return;
+@@ -2128,12 +2162,14 @@ function correctBankOffsetInternal(mid, bankOffset, soundBank) {
+ 			const programIndex = track.events.findIndex((e) => e.statusByte > 128 && e.statusByte < 240 && (e.statusByte & 15) === midiChannel);
+ 			if (programIndex === -1) continue;
+ 			const programTicks = track.events[programIndex].ticks;
+-			const targetProgram = soundBank.getPreset({
++			const defaultPreset = soundBank.getPreset({
+ 				bankMSB: 0,
+ 				bankLSB: 0,
+ 				program: 0,
+ 				isGMGSDrum: false
+-			}, system).program;
++			}, system);
++			if (!defaultPreset) continue;
++			const targetProgram = defaultPreset.program;
+ 			track.addEvents(programIndex, new MIDIMessage(programTicks, MIDIMessageTypes.programChange | midiChannel, new IndexedByteArray([targetProgram])));
+ 			indexToAdd = programIndex;
+ 		}
+@@ -2145,6 +2181,7 @@ function correctBankOffsetInternal(mid, bankOffset, soundBank) {
+ 			program: ch.program,
+ 			isGMGSDrum: ch.isDrum
+ 		}, system);
++		if (!targetPreset) continue;
+ 		const targetBank = BankSelectHacks.addBankOffset(targetPreset.bankMSB, bankOffset, system === "xg");
+ 		track.addEvents(indexToAdd, new MIDIMessage(ticks, MIDIMessageTypes.controllerChange | midiChannel, new IndexedByteArray([MIDIControllers.bankSelect, targetBank])));
+ 	}
+@@ -2436,9 +2473,10 @@ function getUsedProgramsAndKeys(mid, soundBank) {
  		const status = e.statusByte & 240;
  		if (status !== MIDIMessageTypes.noteOn && status !== MIDIMessageTypes.controllerChange && status !== MIDIMessageTypes.programChange && status !== MIDIMessageTypes.systemExclusive) continue;
  		const channelOffset = offsetMap[ports[trackNum]] || 0;
@@ -179,7 +215,7 @@ index cd9e028..2f276f8 100644
  				ch.preset = soundBank.getPreset({
  					bankMSB: ch.bankMSB,
  					bankLSB: ch.bankLSB,
-@@ -2448,7 +2479,7 @@ function getUsedProgramsAndKeys(mid, soundBank) {
+@@ -2448,7 +2486,7 @@ function getUsedProgramsAndKeys(mid, soundBank) {
  				break;
  			}
  			case MIDIMessageTypes.controllerChange: {
@@ -188,7 +224,7 @@ index cd9e028..2f276f8 100644
  				const cc = e.data[0];
  				const value = e.data[1];
  				switch (cc) {
-@@ -2477,7 +2508,7 @@ function getUsedProgramsAndKeys(mid, soundBank) {
+@@ -2477,7 +2515,7 @@ function getUsedProgramsAndKeys(mid, soundBank) {
  				break;
  			}
  			case MIDIMessageTypes.noteOn: {
@@ -197,7 +233,7 @@ index cd9e028..2f276f8 100644
  				if (e.data[1] === 0) continue;
  				if (!ch.preset) continue;
  				let keysForPreset = usedProgramsAndKeys.get(ch.preset);
-@@ -2574,16 +2605,17 @@ const getTempo = (event) => {
+@@ -2574,16 +2612,17 @@ const getTempo = (event) => {
  */
  function getNoteTimesInternal(midi, minDrumLength = 0) {
  	/**
@@ -218,7 +254,7 @@ index cd9e028..2f276f8 100644
  	const noteOff = (midiNote, channel) => {
  		const noteIndexes = unfinishedNotes[channel].get(midiNote);
  		if (noteIndexes === void 0) return;
-@@ -2591,7 +2623,7 @@ function getNoteTimesInternal(midi, minDrumLength = 0) {
+@@ -2591,7 +2630,7 @@ function getNoteTimesInternal(midi, minDrumLength = 0) {
  		if (noteIndex === void 0) return;
  		const note = noteTimes[channel][noteIndex];
  		const time = elapsedTime - note.start;
@@ -227,7 +263,7 @@ index cd9e028..2f276f8 100644
  		unfinished--;
  	};
  	const { timeline, tracks } = midi;
-@@ -2599,7 +2631,7 @@ function getNoteTimesInternal(midi, minDrumLength = 0) {
+@@ -2599,7 +2638,7 @@ function getNoteTimesInternal(midi, minDrumLength = 0) {
  		const e = timeline[i];
  		const event = tracks[e.tr].events[e.ev];
  		const status = event.statusByte >> 4;
@@ -236,7 +272,7 @@ index cd9e028..2f276f8 100644
  		if (status === 8) noteOff(event.data[0], channel);
  		else if (status === 9) {
  			const midiNote = event.data[0];
-@@ -3049,7 +3081,7 @@ var MIDITrack = class MIDITrack {
+@@ -3049,7 +3088,7 @@ var MIDITrack = class MIDITrack {
  		this.name = track.name;
  		this.port = track.port;
  		this.channels = new Set(track.channels);
@@ -245,7 +281,7 @@ index cd9e028..2f276f8 100644
  	}
  	/**
  	* Adds an event to the track.
-@@ -3176,6 +3208,468 @@ function parseSMFInternal(outputMIDI, smfFileBinary, fileName) {
+@@ -3176,6 +3215,468 @@ function parseSMFInternal(outputMIDI, smfFileBinary, fileName) {
  	SpessaLog.groupEnd();
  }
  //#endregion
@@ -714,7 +750,7 @@ index cd9e028..2f276f8 100644
  //#region src/utils/date.ts
  function toISODateString(date) {
  	return date.toISOString().split(".")[0] + "Z";
-@@ -3664,6 +4158,18 @@ var BasicMIDI = class BasicMIDI {
+@@ -3664,6 +4165,18 @@ var BasicMIDI = class BasicMIDI {
  	*/
  	tracks = [];
  	/**
@@ -733,7 +769,7 @@ index cd9e028..2f276f8 100644
  	* A flattened, time‑sorted list of all events in the MIDI sequence.
  	* The order between the tracks is preserved.
  	* Each entry points to the event's track number and its index within that track.
-@@ -3793,15 +4299,25 @@ var BasicMIDI = class BasicMIDI {
+@@ -3793,15 +4306,25 @@ var BasicMIDI = class BasicMIDI {
  	static fromArrayBuffer(arrayBuffer, fileName = "") {
  		const mid = new BasicMIDI();
  		const binaryData = new IndexedByteArray(arrayBuffer);
@@ -760,7 +796,7 @@ index cd9e028..2f276f8 100644
  				break;
  		}
  		return mid;
-@@ -4062,6 +4578,9 @@ var BasicMIDI = class BasicMIDI {
+@@ -4062,6 +4585,9 @@ var BasicMIDI = class BasicMIDI {
  	*/
  	copyMetadataFrom(mid) {
  		this.fileName = mid.fileName;
@@ -770,7 +806,7 @@ index cd9e028..2f276f8 100644
  		this.timeDivision = mid.timeDivision;
  		this.duration = mid.duration;
  		this.firstNoteOn = mid.firstNoteOn;
-@@ -4073,8 +4592,8 @@ var BasicMIDI = class BasicMIDI {
+@@ -4073,8 +4599,8 @@ var BasicMIDI = class BasicMIDI {
  		this.isDLSRMIDI = mid.isDLSRMIDI;
  		this.isDLSRMIDI = mid.isDLSRMIDI;
  		this.tempoChanges = [...mid.tempoChanges];
@@ -781,7 +817,7 @@ index cd9e028..2f276f8 100644
  		this.portChannelOffsetMap = [...mid.portChannelOffsetMap];
  		this.binaryName = mid?.binaryName?.slice();
  		this.loop = { ...mid.loop };
-@@ -4116,6 +4635,7 @@ var BasicMIDI = class BasicMIDI {
+@@ -4116,6 +4642,7 @@ var BasicMIDI = class BasicMIDI {
  		};
  		this.isKaraokeFile = false;
  		this.isMultiPort = false;
@@ -789,7 +825,7 @@ index cd9e028..2f276f8 100644
  		let nameDetected = false;
  		if (this.rmidiInfo.name !== void 0) nameDetected = true;
  		let loopStart = null;
-@@ -4129,6 +4649,7 @@ var BasicMIDI = class BasicMIDI {
+@@ -4129,6 +4656,7 @@ var BasicMIDI = class BasicMIDI {
  				if (e.statusByte >= 128 && e.statusByte < 240) {
  					trackHasVoiceMessages = true;
  					if (e.ticks > this.lastVoiceEventTick) this.lastVoiceEventTick = e.ticks;
@@ -797,7 +833,7 @@ index cd9e028..2f276f8 100644
  					switch (e.statusByte & 240) {
  						case MIDIMessageTypes.controllerChange:
  							switch (e.data[0]) {
-@@ -4232,7 +4753,7 @@ var BasicMIDI = class BasicMIDI {
+@@ -4232,7 +4760,7 @@ var BasicMIDI = class BasicMIDI {
  			const firstNoteOn = t.events.find((e) => (e.statusByte & 240) === MIDIMessageTypes.noteOn);
  			if (firstNoteOn) firstNoteOns.push(firstNoteOn.ticks);
  		}
@@ -806,7 +842,7 @@ index cd9e028..2f276f8 100644
  		SpessaLog.info(`%cFirst note-on detected at: %c${this.firstNoteOn}%c ticks!`, ConsoleColors.info, ConsoleColors.recognized, ConsoleColors.info);
  		loopStart ??= this.firstNoteOn;
  		if (loopEnd === null || loopEnd === 0) loopEnd = this.lastVoiceEventTick;
-@@ -4490,6 +5011,7 @@ function processEventInternal(event, trackIndex) {
+@@ -4490,6 +5018,7 @@ function processEventInternal(event, trackIndex) {
  	} else status = event.statusByte;
  	const offset = this.midiPortChannelOffsets[this.currentMIDIPorts[trackIndex]] || 0;
  	channel += offset;
@@ -814,7 +850,7 @@ index cd9e028..2f276f8 100644
  	switch (status) {
  		case MIDIMessageTypes.noteOn: {
  			let playingNotes = this.playingNotes[channel];
-@@ -4518,7 +5040,8 @@ function processEventInternal(event, trackIndex) {
+@@ -4518,7 +5047,8 @@ function processEventInternal(event, trackIndex) {
  			break;
  		}
  		case MIDIMessageTypes.pitchWheel:
@@ -824,7 +860,7 @@ index cd9e028..2f276f8 100644
  			break;
  		case MIDIMessageTypes.controllerChange:
  			if (this._midiData.isMultiPort && track.channels.size === 0) return;
-@@ -4645,6 +5168,11 @@ function loadNewSequenceInternal(parsedMIDI) {
+@@ -4645,6 +5175,11 @@ function loadNewSequenceInternal(parsedMIDI) {
  	this.oneTickToSeconds = 60 / (120 * parsedMIDI.timeDivision);
  	this._midiData = parsedMIDI;
  	this.isFinished = false;
@@ -836,7 +872,7 @@ index cd9e028..2f276f8 100644
  	this.synth.clearEmbeddedSoundBank();
  	if (this._midiData.embeddedSoundBank !== void 0) {
  		SpessaLog.info("%cEmbedded soundbank detected! Using it.", ConsoleColors.recognized);
-@@ -4835,7 +5363,8 @@ function setTimeToInternal(time, ticks = void 0) {
+@@ -4835,7 +5370,8 @@ function setTimeToInternal(time, ticks = void 0) {
  			status = event.statusByte & 240;
  			statusChannel = event.statusByte & 15;
  		} else status = event.statusByte;
@@ -846,7 +882,7 @@ index cd9e028..2f276f8 100644
  		channels[channel] ??= {
  			pitchWheel: 8192,
  			controllers: new Int16Array(DEFAULT_MIDI_CONTROLLERS),
-@@ -4849,7 +5378,8 @@ function setTimeToInternal(time, ticks = void 0) {
+@@ -4849,7 +5385,8 @@ function setTimeToInternal(time, ticks = void 0) {
  				break;
  			case MIDIMessageTypes.noteOff: break;
  			case MIDIMessageTypes.pitchWheel:
@@ -856,7 +892,7 @@ index cd9e028..2f276f8 100644
  				break;
  			case MIDIMessageTypes.systemExclusive: {
  				const analyzed = MIDIUtils.analyzeSysEx(event.data);
-@@ -11767,6 +12297,609 @@ var SoundFont2 = class extends BasicSoundBank {
+@@ -11767,6 +12304,609 @@ var SoundFont2 = class extends BasicSoundBank {
  };
  //#endregion
  //#region src/soundbank/sound_bank_loader.ts
@@ -1466,7 +1502,7 @@ index cd9e028..2f276f8 100644
  var SoundBankLoader = class {
  	/**
  	* Loads a sound bank from a file buffer.
-@@ -11774,9 +12907,14 @@ var SoundBankLoader = class {
+@@ -11774,9 +12914,14 @@ var SoundBankLoader = class {
  	* @returns The loaded sound bank, a BasicSoundBank instance.
  	*/
  	static fromArrayBuffer(buffer) {
@@ -1481,7 +1517,7 @@ index cd9e028..2f276f8 100644
  	static loadDLS(buffer) {
  		return DownloadableSounds.read(buffer).toSF();
  	}
-@@ -13672,6 +14810,10 @@ var MIDIChannel = class {
+@@ -13672,6 +14817,10 @@ var MIDIChannel = class {
  	* @internal
  	*/
  	setPatch(patch) {
